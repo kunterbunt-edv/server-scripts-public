@@ -130,6 +130,9 @@ create_github_token() {
     chmod 600 "$TOKEN_FILE"
     log_success "Token saved to $TOKEN_FILE"
     
+    # Export for child processes
+    export GITHUB_TOKEN="$token"
+    
     return 0
 }
 
@@ -145,6 +148,13 @@ download_management_script() {
             "$download_url"; then
         chmod +x "$MANAGE_SCRIPT"
         log_success "Management script downloaded to $MANAGE_SCRIPT"
+        
+        # Also save to /srv/scripts immediately
+        sudo mkdir -p /srv/scripts
+        sudo cp "$MANAGE_SCRIPT" /srv/scripts/
+        sudo chmod +x /srv/scripts/manage-kubu-vps.sh
+        log_success "Management script copied to /srv/scripts/"
+        
         return 0
     else
         log_error "Failed to download management script"
@@ -182,8 +192,8 @@ run_deployment() {
         log_info "Deployment skipped"
         echo ""
         echo "To run deployment later:"
-        echo "  cd $WORK_DIR"
-        echo "  sudo ./manage-kubu-vps.sh --deploy"
+        echo "  cd /srv/scripts"
+        echo "  sudo GITHUB_TOKEN='$(cat $TOKEN_FILE)' ./manage-kubu-vps.sh --deploy"
         return 1
     fi
     
@@ -191,7 +201,9 @@ run_deployment() {
     cd "$WORK_DIR"
     
     log_info "Starting deployment..."
-    if sudo -E "$MANAGE_SCRIPT" --deploy; then
+    
+    # Pass token via environment variable
+    if sudo GITHUB_TOKEN="$(cat $TOKEN_FILE)" "$MANAGE_SCRIPT" --deploy; then
         log_success "Deployment completed successfully!"
         return 0
     else
@@ -211,7 +223,11 @@ show_deployment_welcome() {
         source /etc/profile.d/kubu-vps-startup.sh
         
         # Force show welcome message once
-        show_welcome
+        if command -v show_welcome &>/dev/null; then
+            show_welcome
+        else
+            log_info "Welcome function loaded - type 'welcome' to display"
+        fi
     else
         log_warning "Welcome script not found - will be available after logout/login"
     fi
@@ -261,7 +277,7 @@ show_final_instructions() {
     echo "  welcome          - Show server status and this information"
     echo "  install-docker   - Install Docker and Docker Compose"
     echo "  setup-groups     - Add current user to sudo and docker groups"
-    echo "  manage-kubu-vps      - Main management tool"
+    echo "  manage-kubu-vps  - Main management tool"
     echo "  dockerdir        - Navigate to Docker projects"
     echo ""
     echo -e "${CYAN}Next recommended steps:${NC}"
@@ -321,8 +337,8 @@ main() {
         log_error "Deployment failed - keeping files for manual retry"
         echo ""
         echo "Manual deployment:"
-        echo "  cd $WORK_DIR"
-        echo "  sudo ./kubu-vps-manage.sh --deploy"
+        echo "  cd /srv/scripts"
+        echo "  sudo GITHUB_TOKEN='$(cat $TOKEN_FILE 2>/dev/null || echo "YOUR_TOKEN")' ./manage-kubu-vps.sh --deploy"
         exit 1
     fi
     
