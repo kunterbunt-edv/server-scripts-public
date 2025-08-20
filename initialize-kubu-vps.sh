@@ -173,7 +173,11 @@ create_github_token() {
         echo ""
         echo "Enter your GitHub token (starts with 'ghp_'):"
         echo -n "Token: "
+        
+        # Temporarily disable set -u for input to avoid issues
+        set +u
         read token
+        set -u
         
         if [[ -z "$token" ]]; then
             echo "Token cannot be empty. Please try again."
