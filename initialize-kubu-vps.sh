@@ -321,17 +321,10 @@ show_deployment_welcome() {
     log_step "Loading welcome message..."
     echo ""
     
-    # Source the startup script to show welcome message immediately
+    # Source the startup script but don't show welcome yet
     if [[ -f "/etc/profile.d/kubu-vps-startup.sh" ]]; then
-        # Export functions and show welcome
         source /etc/profile.d/kubu-vps-startup.sh
-        
-        # Force show welcome message once
-        if command -v show_welcome &>/dev/null; then
-            show_welcome
-        else
-            log_info "Welcome function loaded - type 'welcome' to display"
-        fi
+        log_info "Welcome functions loaded - accessible via 'welcome' command"
     else
         log_warning "Welcome script not found - will be available after logout/login"
     fi
