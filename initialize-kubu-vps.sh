@@ -127,8 +127,6 @@ create_github_token() {
     done
     
     # Save token to file with hostname
-    local hostname=$(hostname)
-    TOKEN_FILE="$WORK_DIR/.${hostname}_token"
     echo "$token" > "$TOKEN_FILE"
     chmod 600 "$TOKEN_FILE"
     log_success "Token saved to $TOKEN_FILE"
@@ -205,8 +203,8 @@ run_deployment() {
     
     log_info "Starting deployment..."
     
-    # Pass token via environment variable
-    if sudo GITHUB_TOKEN="$(cat $TOKEN_FILE)" "$MANAGE_SCRIPT" --deploy; then
+    # Pass token via environment variable and use --force to skip confirmations
+    if sudo GITHUB_TOKEN="$(cat $TOKEN_FILE)" "$MANAGE_SCRIPT" --deploy --force; then
         log_success "Deployment completed successfully!"
         return 0
     else
