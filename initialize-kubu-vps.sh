@@ -204,7 +204,8 @@ run_deployment() {
     log_info "Starting deployment..."
     
     # Pass token via environment variable and use --force to skip confirmations
-    if sudo GITHUB_TOKEN="$(cat $TOKEN_FILE)" "$MANAGE_SCRIPT" --deploy --force; then
+    # Explicitly use bash to run the script
+    if sudo GITHUB_TOKEN="$(cat $TOKEN_FILE)" /bin/bash "$MANAGE_SCRIPT" --deploy --force; then
         log_success "Deployment completed successfully!"
         return 0
     else
