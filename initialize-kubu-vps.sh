@@ -1,6 +1,6 @@
 #!/bin/bash
 # initialize-kubu-vps.sh
-# KuBu VPS Initialization Script
+# KuBu VPS Initialization Script with improved token management
 # Downloads and deploys KuBu server configuration from private repository
 
 set -euo pipefail
@@ -12,8 +12,9 @@ MANAGEMENT_SCRIPT_PATH="/common/scripts/manage-kubu-vps.sh"
 WORK_DIR="/tmp"
 HOSTNAME=$(hostname)
 TOKEN_FILE="$WORK_DIR/.${HOSTNAME}_token"
+SECURE_TOKEN_DIR="/srv/tokens"
+SECURE_TOKEN_FILE="$SECURE_TOKEN_DIR/.${HOSTNAME}_token"
 MANAGE_SCRIPT="$WORK_DIR/manage-kubu-vps.sh"
-FINAL_TOKEN_DIR="/srv/tokens"
 
 # Color definitions
 RED='\033[0;31m'
@@ -34,10 +35,10 @@ log_step() { echo -e "${PURPLE}[STEP]${NC} $1"; }
 # Welcome message
 show_welcome() {
     echo -e "${CYAN}================================================${NC}"
-    echo -e "${CYAN}  VPS Server Initialization${NC}"
+    echo -e "${CYAN}  KuBu VPS Server Initialization${NC}"
     echo -e "${CYAN}================================================${NC}"
     echo ""
-    echo "This script will set up your VPS with the server configuration."
+    echo "This script will set up your VPS with the KuBu server configuration."
     echo ""
     echo "What will be installed:"
     echo "  • Server management scripts"
@@ -85,11 +86,57 @@ check_prerequisites() {
     log_success "Prerequisites check passed"
 }
 
-# Guide user through GitHub token creation
-create_github_token() {
-    log_step "GitHub Token Setup"
+# Check for existing token and handle it
+handle_existing_token() {
+    log_step "Checking for existing GitHub token..."
+    
+    # Check for existing token in secure location
+    if [[ -f "$SECURE_TOKEN_FILE" ]]; then
+        local existing_token=$(cat "$SECURE_TOKEN_FILE" 2>/dev/null | tr -d '\n\r ')
+        if [[ -n "$existing_token" ]]; then
+            log_info "Found existing GitHub token: $SECURE_TOKEN_FILE"
+            echo ""
+            echo "Options:"
+            echo "1) Use existing token"
+            echo "2) Enter new token"
+            echo "3) Show token creation guide"
+            echo ""
+            read -p "Choose option (1/2/3): " -n 1 -r
+            echo ""
+            
+            case "$REPLY" in
+                "1"|"")
+                    log_info "Using existing token"
+                    cp "$SECURE_TOKEN_FILE" "$TOKEN_FILE"
+                    chmod 600 "$TOKEN_FILE"
+                    return 0
+                    ;;
+                "2")
+                    log_info "Will create new token..."
+                    return 1  # Continue to token creation
+                    ;;
+                "3")
+                    show_token_creation_guide
+                    return 1  # Continue to token creation
+                    ;;
+                *)
+                    log_info "Invalid choice, using existing token"
+                    cp "$SECURE_TOKEN_FILE" "$TOKEN_FILE"
+                    chmod 600 "$TOKEN_FILE"
+                    return 0
+                    ;;
+            esac
+        fi
+    fi
+    
+    # No existing token found
+    return 1
+}
+
+# Show token creation guide
+show_token_creation_guide() {
     echo ""
-    echo "To access the private repository, you need a GitHub token."
+    echo -e "${YELLOW}=== GitHub Token Creation Guide ===${NC}"
     echo ""
     echo -e "${YELLOW}IMPORTANT: Log in to GitHub with the admin account!${NC}"
     echo ""
@@ -99,7 +146,7 @@ create_github_token() {
     echo "2. Click 'Generate new token' → 'Generate new token (classic)'"
     echo ""
     echo "3. Configure the token:"
-    echo "   • Name: 'VPS Management - $(hostname)'"
+    echo "   • Name: 'KuBu VPS Management - $(hostname)'"
     echo "   • Expiration: 90 days (or as needed)"
     echo "   • Scopes: Check 'repo' (Full control of private repositories)"
     echo ""
@@ -108,10 +155,26 @@ create_github_token() {
     echo "5. Copy the token (starts with 'ghp_')"
     echo "   ⚠️  You won't be able to see it again!"
     echo ""
+}
+
+# Create or update GitHub token
+create_github_token() {
+    # Check for existing token first
+    if handle_existing_token; then
+        log_success "Using existing GitHub token"
+        return 0
+    fi
+    
+    # Show creation guide if not already shown
+    if [[ "$REPLY" != "3" ]]; then
+        show_token_creation_guide
+    fi
     
     local token=""
     while [[ -z "$token" ]]; do
-        read -p "Enter your GitHub token: " -r token
+        echo -n "Enter your GitHub token: "
+        read -s token
+        echo ""
         
         if [[ -z "$token" ]]; then
             echo "Token cannot be empty. Please try again."
@@ -126,10 +189,17 @@ create_github_token() {
         fi
     done
     
-    # Save token to file with hostname
+    # Save token to temporary file
     echo "$token" > "$TOKEN_FILE"
     chmod 600 "$TOKEN_FILE"
-    log_success "Token saved to $TOKEN_FILE"
+    log_success "Token saved temporarily to $TOKEN_FILE"
+    
+    # Also save to secure location immediately
+    sudo mkdir -p "$SECURE_TOKEN_DIR"
+    sudo chmod 700 "$SECURE_TOKEN_DIR"
+    sudo cp "$TOKEN_FILE" "$SECURE_TOKEN_FILE"
+    sudo chmod 600 "$SECURE_TOKEN_FILE"
+    log_success "Token also saved to secure location: $SECURE_TOKEN_FILE"
     
     # Export for child processes
     export GITHUB_TOKEN="$token"
@@ -172,6 +242,36 @@ download_management_script() {
     fi
 }
 
+# Test token before deployment
+test_github_token() {
+    log_step "Testing GitHub token..."
+    
+    local token=$(cat "$TOKEN_FILE" | tr -d '\n\r ')
+    local test_url="$PRIVATE_REPO_RAW/README.md"
+    
+    if wget --spider --header="Authorization: token $token" "$test_url" 2>/dev/null; then
+        log_success "GitHub token is valid and has repository access"
+        return 0
+    else
+        log_error "GitHub token test failed"
+        echo ""
+        echo "The token might be:"
+        echo "  • Invalid or expired"
+        echo "  • Missing 'repo' scope"
+        echo "  • Not authorized for this repository"
+        echo ""
+        read -p "Try with a different token? (y/N): " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # Remove failed token and try again
+            rm -f "$TOKEN_FILE" "$SECURE_TOKEN_FILE" 2>/dev/null
+            return 1  # Signal to retry token creation
+        else
+            return 1
+        fi
+    fi
+}
+
 # Run deployment
 run_deployment() {
     log_step "Ready for deployment"
@@ -194,7 +294,7 @@ run_deployment() {
         echo ""
         echo "To run deployment later:"
         echo "  cd /srv/scripts"
-        echo "  sudo GITHUB_TOKEN='$(cat $TOKEN_FILE)' ./manage-kubu-vps.sh --deploy"
+        echo "  sudo GITHUB_TOKEN='$(cat $TOKEN_FILE 2>/dev/null || echo "YOUR_TOKEN")' ./manage-kubu-vps.sh deploy --force"
         return 1
     fi
     
@@ -204,8 +304,7 @@ run_deployment() {
     log_info "Starting deployment..."
     
     # Pass token via environment variable and use --force to skip confirmations
-    # Explicitly use bash to run the script
-    if sudo GITHUB_TOKEN="$(cat $TOKEN_FILE)" /bin/bash "$MANAGE_SCRIPT" --deploy --force; then
+    if sudo GITHUB_TOKEN="$(cat $TOKEN_FILE)" /bin/bash "$MANAGE_SCRIPT" deploy --force; then
         log_success "Deployment completed successfully!"
         return 0
     else
@@ -239,22 +338,16 @@ show_deployment_welcome() {
 finalize_setup() {
     log_step "Finalizing setup..."
     
-    # Create secure token directory
-    sudo mkdir -p "$FINAL_TOKEN_DIR"
-    sudo chmod 700 "$FINAL_TOKEN_DIR"
-    
-    # Move token to secure location with hostname
-    if [[ -f "$TOKEN_FILE" ]]; then
-        local final_token_file="$FINAL_TOKEN_DIR/.${HOSTNAME}_token"
-        sudo mv "$TOKEN_FILE" "$final_token_file"
-        sudo chmod 600 "$final_token_file"
-        log_success "Token moved to secure location: $final_token_file"
+    # Token is already in secure location from create_github_token()
+    if [[ -f "$SECURE_TOKEN_FILE" ]]; then
+        log_success "Token secured at: $SECURE_TOKEN_FILE"
     fi
     
     # Clean up temporary files
     local cleanup_files=(
         "$WORK_DIR/initialize-kubu-vps.sh"
         "$MANAGE_SCRIPT"
+        "$TOKEN_FILE"  # Remove temporary token file
     )
     
     for file in "${cleanup_files[@]}"; do
@@ -271,13 +364,13 @@ finalize_setup() {
 show_final_instructions() {
     echo ""
     echo -e "${GREEN}================================================${NC}"
-    echo -e "${GREEN}  VPS Setup Complete!${NC}"
+    echo -e "${GREEN}  KuBu VPS Setup Complete!${NC}"
     echo -e "${GREEN}================================================${NC}"
     echo ""
-    echo "Your VPS is now configured with server management tools."
+    echo "Your VPS is now configured with KuBu server management tools."
     echo ""
     echo -e "${CYAN}Available commands:${NC}"
-    echo "  welcome          - Show server status and this information"
+    echo "  welcome          - Show server status and information"
     echo "  install-docker   - Install Docker and Docker Compose"
     echo "  setup-groups     - Add current user to sudo and docker groups"
     echo "  manage-kubu-vps  - Main management tool"
@@ -297,6 +390,10 @@ show_final_instructions() {
     echo ""
     echo "For help: manage-kubu-vps --help"
     echo ""
+    echo -e "${YELLOW}Token Management:${NC}"
+    echo "Your GitHub token is securely stored in $SECURE_TOKEN_DIR"
+    echo "Future deployments will automatically use this token."
+    echo ""
 }
 
 # Handle errors
@@ -306,7 +403,7 @@ handle_error() {
     echo ""
     echo "Cleaning up temporary files..."
     
-    # Clean up on error
+    # Clean up on error but keep secure token if it was created
     rm -f "$TOKEN_FILE" "$MANAGE_SCRIPT" "$WORK_DIR/initialize-kubu-vps.sh" 2>/dev/null
     
     echo ""
@@ -318,7 +415,7 @@ handle_error() {
     exit $exit_code
 }
 
-# Main execution
+# Main execution with token retry logic
 main() {
     # Set error handler
     trap handle_error ERR
@@ -329,7 +426,26 @@ main() {
     # Run initialization steps
     show_welcome
     check_prerequisites
-    create_github_token
+    
+    # Token creation with retry logic
+    local token_attempts=0
+    local max_attempts=3
+    
+    while [[ $token_attempts -lt $max_attempts ]]; do
+        if create_github_token && test_github_token; then
+            break  # Token is valid, continue
+        else
+            ((token_attempts++))
+            if [[ $token_attempts -lt $max_attempts ]]; then
+                log_warning "Attempt $token_attempts failed, trying again..."
+                echo ""
+            else
+                log_error "Failed to create valid token after $max_attempts attempts"
+                exit 1
+            fi
+        fi
+    done
+    
     download_management_script
     
     if run_deployment; then
@@ -341,11 +457,11 @@ main() {
         echo ""
         echo "Manual deployment:"
         echo "  cd /srv/scripts"
-        echo "  sudo GITHUB_TOKEN='$(cat $TOKEN_FILE 2>/dev/null || echo "YOUR_TOKEN")' ./manage-kubu-vps.sh --deploy"
+        echo "  sudo GITHUB_TOKEN='$(cat $SECURE_TOKEN_FILE 2>/dev/null || echo "YOUR_TOKEN")' ./manage-kubu-vps.sh deploy --force"
         exit 1
     fi
     
-    log_success "VPS initialization completed successfully!"
+    log_success "KuBu VPS initialization completed successfully!"
 }
 
 # Check if running as root (not recommended)
