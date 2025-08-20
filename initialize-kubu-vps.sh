@@ -127,6 +127,8 @@ create_github_token() {
     done
     
     # Save token to file with hostname
+    local hostname=$(hostname)
+    TOKEN_FILE="$WORK_DIR/.${hostname}_token"
     echo "$token" > "$TOKEN_FILE"
     chmod 600 "$TOKEN_FILE"
     log_success "Token saved to $TOKEN_FILE"
