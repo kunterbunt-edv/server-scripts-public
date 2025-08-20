@@ -10,7 +10,8 @@ PRIVATE_REPO_URL="https://github.com/kunterbunt-edv/server-scripts"
 PRIVATE_REPO_RAW="https://raw.githubusercontent.com/kunterbunt-edv/server-scripts/main"
 MANAGEMENT_SCRIPT_PATH="/common/scripts/manage-kubu-vps.sh"
 WORK_DIR="/tmp"
-TOKEN_FILE="$WORK_DIR/.kubu-token"
+HOSTNAME=$(hostname)
+TOKEN_FILE="$WORK_DIR/.${HOSTNAME}_token"
 MANAGE_SCRIPT="$WORK_DIR/manage-kubu-vps.sh"
 FINAL_TOKEN_DIR="/srv/tokens"
 
@@ -125,7 +126,9 @@ create_github_token() {
         fi
     done
     
-    # Save token to file
+    # Save token to file with hostname
+    local hostname=$(hostname)
+    TOKEN_FILE="$WORK_DIR/.${hostname}_token"
     echo "$token" > "$TOKEN_FILE"
     chmod 600 "$TOKEN_FILE"
     log_success "Token saved to $TOKEN_FILE"
@@ -241,11 +244,12 @@ finalize_setup() {
     sudo mkdir -p "$FINAL_TOKEN_DIR"
     sudo chmod 700 "$FINAL_TOKEN_DIR"
     
-    # Move token to secure location
+    # Move token to secure location with hostname
     if [[ -f "$TOKEN_FILE" ]]; then
-        sudo mv "$TOKEN_FILE" "$FINAL_TOKEN_DIR/"
-        sudo chmod 600 "$FINAL_TOKEN_DIR/.kubu-token"
-        log_success "Token moved to secure location: $FINAL_TOKEN_DIR/"
+        local final_token_file="$FINAL_TOKEN_DIR/.${HOSTNAME}_token"
+        sudo mv "$TOKEN_FILE" "$final_token_file"
+        sudo chmod 600 "$final_token_file"
+        log_success "Token moved to secure location: $final_token_file"
     fi
     
     # Clean up temporary files
