@@ -407,7 +407,7 @@ handle_error() {
     exit $exit_code
 }
 
-# Main execution - simplified flow
+# Main execution - corrected flow
 main() {
     # Set error handler
     trap handle_error ERR
@@ -456,10 +456,7 @@ main() {
     # Secure token and cleanup
     finalize_setup
     
-    # Show completion message
-    show_final_instructions
-    
-    # Now run the actual deployment via management script
+    # LAST ACTION: Execute management script - NO MORE MESSAGES AFTER THIS
     log_info "Starting KuBu VPS deployment via management script..."
     echo ""
     
