@@ -10,10 +10,10 @@ PRIVATE_REPO_URL="https://github.com/kunterbunt-edv/server-scripts"
 PRIVATE_REPO_RAW="https://raw.githubusercontent.com/kunterbunt-edv/server-scripts/main"
 MANAGEMENT_SCRIPT_PATH="/common/scripts/manage-kubu-vps.sh"
 WORK_DIR="/tmp"
-HOSTNAME=$(hostname)
-TOKEN_FILE="$WORK_DIR/.${HOSTNAME}_token"
+REPO_NAME="server-scripts"  # Extract repo name for token naming
+TOKEN_FILE="$WORK_DIR/.${REPO_NAME}_token"
 SECURE_TOKEN_DIR="/srv/tokens"
-SECURE_TOKEN_FILE="$SECURE_TOKEN_DIR/.${HOSTNAME}_token"
+SECURE_TOKEN_FILE="$SECURE_TOKEN_DIR/.${REPO_NAME}_token"
 MANAGE_SCRIPT="$WORK_DIR/manage-kubu-vps.sh"
 
 # Color definitions
@@ -86,8 +86,34 @@ check_prerequisites() {
     log_success "Prerequisites check passed"
 }
 
-# Check for existing token and handle it
-handle_existing_token() {
+# Remove the old handle_existing_token function since we replaced it with check_existing_token
+
+# Show token creation guide
+show_token_creation_guide() {
+    echo ""
+    echo -e "${YELLOW}=== GitHub Token Creation Guide ===${NC}"
+    echo ""
+    echo -e "${YELLOW}IMPORTANT: Log in to GitHub with the admin account!${NC}"
+    echo ""
+    echo "1. Open this URL in your browser:"
+    echo -e "   ${CYAN}https://github.com/settings/tokens${NC}"
+    echo ""
+    echo "2. Click 'Generate new token' → 'Generate new token (classic)'"
+    echo ""
+    echo "3. Configure the token:"
+    echo "   • Name: 'KuBu VPS Management - $REPO_NAME'"
+    echo "   • Expiration: 90 days (or as needed)"
+    echo "   • Scopes: Check 'repo' (Full control of private repositories)"
+    echo ""
+    echo "4. Click 'Generate token'"
+    echo ""
+    echo "5. Copy the token (starts with 'ghp_')"
+    echo "   ⚠️  You won't be able to see it again!"
+    echo ""
+}
+
+# Check for existing token first - separate function
+check_existing_token() {
     log_step "Checking for existing GitHub token..."
     
     # Check for existing token in secure location
@@ -109,6 +135,8 @@ handle_existing_token() {
                     log_info "Using existing token"
                     cp "$SECURE_TOKEN_FILE" "$TOKEN_FILE"
                     chmod 600 "$TOKEN_FILE"
+                    export GITHUB_TOKEN="$existing_token"
+                    log_success "Using existing GitHub token"
                     return 0
                     ;;
                 "2")
@@ -123,6 +151,8 @@ handle_existing_token() {
                     log_info "Invalid choice, using existing token"
                     cp "$SECURE_TOKEN_FILE" "$TOKEN_FILE"
                     chmod 600 "$TOKEN_FILE"
+                    export GITHUB_TOKEN="$existing_token"
+                    log_success "Using existing GitHub token"
                     return 0
                     ;;
             esac
@@ -130,45 +160,13 @@ handle_existing_token() {
     fi
     
     # No existing token found
+    log_info "No existing token found, need to create one"
     return 1
 }
 
-# Show token creation guide
-show_token_creation_guide() {
-    echo ""
-    echo -e "${YELLOW}=== GitHub Token Creation Guide ===${NC}"
-    echo ""
-    echo -e "${YELLOW}IMPORTANT: Log in to GitHub with the admin account!${NC}"
-    echo ""
-    echo "1. Open this URL in your browser:"
-    echo -e "   ${CYAN}https://github.com/settings/tokens${NC}"
-    echo ""
-    echo "2. Click 'Generate new token' → 'Generate new token (classic)'"
-    echo ""
-    echo "3. Configure the token:"
-    echo "   • Name: 'KuBu VPS Management - $(hostname)'"
-    echo "   • Expiration: 90 days (or as needed)"
-    echo "   • Scopes: Check 'repo' (Full control of private repositories)"
-    echo ""
-    echo "4. Click 'Generate token'"
-    echo ""
-    echo "5. Copy the token (starts with 'ghp_')"
-    echo "   ⚠️  You won't be able to see it again!"
-    echo ""
-}
-
-# Create or update GitHub token
+# Create new GitHub token
 create_github_token() {
-    # Check for existing token first
-    if handle_existing_token; then
-        log_success "Using existing GitHub token"
-        return 0
-    fi
-    
-    # Show creation guide if not already shown
-    if [[ "$REPLY" != "3" ]]; then
-        show_token_creation_guide
-    fi
+    show_token_creation_guide
     
     local token=""
     while [[ -z "$token" ]]; do
@@ -415,7 +413,7 @@ handle_error() {
     exit $exit_code
 }
 
-# Main execution with token retry logic
+# Main execution with improved token logic
 main() {
     # Set error handler
     trap handle_error ERR
@@ -427,13 +425,21 @@ main() {
     show_welcome
     check_prerequisites
     
-    # Token creation with retry logic
+    # Token handling with proper flow
+    local token_ready=false
     local token_attempts=0
     local max_attempts=3
     
-    while [[ $token_attempts -lt $max_attempts ]]; do
+    # First check if token already exists
+    if check_existing_token; then
+        # Existing token is being used
+        token_ready=true
+    fi
+    
+    # If no existing token or user wants new one, create it
+    while [[ "$token_ready" == "false" ]] && [[ $token_attempts -lt $max_attempts ]]; do
         if create_github_token && test_github_token; then
-            break  # Token is valid, continue
+            token_ready=true
         else
             ((token_attempts++))
             if [[ $token_attempts -lt $max_attempts ]]; then
@@ -445,6 +451,11 @@ main() {
             fi
         fi
     done
+    
+    if [[ "$token_ready" == "false" ]]; then
+        log_error "No valid token available"
+        exit 1
+    fi
     
     download_management_script
     
