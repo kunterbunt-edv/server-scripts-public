@@ -170,9 +170,10 @@ create_github_token() {
     
     local token=""
     while [[ -z "$token" ]]; do
-        echo -n "Enter your GitHub token: "
-        read -s token
         echo ""
+        echo "Enter your GitHub token (starts with 'ghp_'):"
+        echo -n "Token: "
+        read token
         
         if [[ -z "$token" ]]; then
             echo "Token cannot be empty. Please try again."
