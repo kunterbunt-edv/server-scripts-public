@@ -316,15 +316,11 @@ run_deployment() {
     fi
 }
 
-# Show welcome message after deployment
+# Show welcome message after deployment - no automatic welcome
 show_deployment_welcome() {
-    log_step "Loading welcome message..."
-    echo ""
-    
-    # Source the startup script but don't show welcome yet
+    # Just confirm the script is ready, don't load it yet
     if [[ -f "/etc/profile.d/kubu-vps-startup.sh" ]]; then
-        source /etc/profile.d/kubu-vps-startup.sh
-        log_info "Welcome functions loaded - accessible via 'welcome' command"
+        log_success "Welcome script deployed successfully"
     else
         log_warning "Welcome script not found - will be available after logout/login"
     fi
@@ -411,7 +407,7 @@ handle_error() {
     exit $exit_code
 }
 
-# Main execution with improved token logic
+# Main execution - simplified flow
 main() {
     # Set error handler
     trap handle_error ERR
@@ -423,14 +419,13 @@ main() {
     show_welcome
     check_prerequisites
     
-    # Token handling with proper flow
+    # Token handling
     local token_ready=false
     local token_attempts=0
     local max_attempts=3
     
     # First check if token already exists
     if check_existing_token; then
-        # Existing token is being used
         token_ready=true
     fi
     
@@ -455,22 +450,21 @@ main() {
         exit 1
     fi
     
+    # Download management script
     download_management_script
     
-    if run_deployment; then
-        show_deployment_welcome
-        finalize_setup
-        show_final_instructions
-    else
-        log_error "Deployment failed - keeping files for manual retry"
-        echo ""
-        echo "Manual deployment:"
-        echo "  cd /srv/scripts"
-        echo "  sudo GITHUB_TOKEN='$(cat $SECURE_TOKEN_FILE 2>/dev/null || echo "YOUR_TOKEN")' ./manage-kubu-vps.sh deploy --force"
-        exit 1
-    fi
+    # Secure token and cleanup
+    finalize_setup
     
-    log_success "KuBu VPS initialization completed successfully!"
+    # Show completion message
+    show_final_instructions
+    
+    # Now run the actual deployment via management script
+    log_info "Starting KuBu VPS deployment via management script..."
+    echo ""
+    
+    # Execute management script - this will handle all deployment and welcome message
+    exec sudo GITHUB_TOKEN="$(cat $SECURE_TOKEN_FILE)" /srv/scripts/manage-kubu-vps.sh deploy --force
 }
 
 # Check if running as root (not recommended)
