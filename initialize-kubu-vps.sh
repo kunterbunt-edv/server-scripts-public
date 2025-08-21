@@ -2,41 +2,92 @@
 # initialize-kubu-vps.sh
 # KuBu VPS Initialization Script with improved token management
 # Downloads and deploys KuBu server configuration from private repository
+# Repository: server-scripts-public/
+# Dependencies: wget, git, curl, sudo access
 
 set -euo pipefail
 
-# Configuration
-PRIVATE_REPO_URL="https://github.com/kunterbunt-edv/server-scripts"
-PRIVATE_REPO_RAW="https://raw.githubusercontent.com/kunterbunt-edv/server-scripts/main"
-MANAGEMENT_SCRIPT_PATH="/common/scripts/manage-kubu-vps.sh"
-WORK_DIR="/tmp"
-REPO_NAME="server-scripts"  # Extract repo name for token naming
-TOKEN_FILE="$WORK_DIR/.${REPO_NAME}_token"
-SECURE_TOKEN_DIR="/srv/tokens"
-SECURE_TOKEN_FILE="$SECURE_TOKEN_DIR/.${REPO_NAME}_token"
-MANAGE_SCRIPT="$WORK_DIR/manage-kubu-vps.sh"
+# Exit codes
+readonly EXIT_SUCCESS=0
+readonly EXIT_PREREQUISITES=1
+readonly EXIT_TOKEN_INVALID=2
+readonly EXIT_DOWNLOAD_FAILED=3
+readonly EXIT_DEPLOYMENT_FAILED=4
+readonly EXIT_USER_CANCELLED=5
 
-# Color definitions
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Configuration
+readonly PRIVATE_REPO_URL="https://github.com/kunterbunt-edv/server-scripts"
+readonly PRIVATE_REPO_RAW="https://raw.githubusercontent.com/kunterbunt-edv/server-scripts/main"
+readonly MANAGEMENT_SCRIPT_PATH="/common/scripts/manage-kubu-vps.sh"
+readonly WORK_DIR="/tmp"
+readonly REPO_NAME="server-scripts"  # Extract repo name for token naming
+readonly TOKEN_FILE="$WORK_DIR/.${REPO_NAME}_token"
+readonly SECURE_TOKEN_DIR="/srv/tokens"
+readonly SECURE_TOKEN_FILE="$SECURE_TOKEN_DIR/.${REPO_NAME}_token"
+readonly MANAGE_SCRIPT="$WORK_DIR/manage-kubu-vps.sh"
+
+# Color definitions with semantic meaning
+readonly COLOR_ERROR='\033[0;31m'        # Red - Errors and critical issues
+readonly COLOR_SUCCESS='\033[0;32m'      # Green - Successful operations
+readonly COLOR_WARNING='\033[0;33m'      # Yellow - Warnings and cautions
+readonly COLOR_INFO='\033[0;34m'         # Blue - Informational messages
+readonly COLOR_STEP='\033[0;35m'         # Purple - Process steps
+readonly COLOR_HIGHLIGHT='\033[0;36m'    # Cyan - Highlighting important items
+readonly COLOR_RESET='\033[0m'           # Reset all formatting
+
+# Legacy aliases for compatibility
+readonly RED=$COLOR_ERROR
+readonly GREEN=$COLOR_SUCCESS
+readonly YELLOW=$COLOR_WARNING
+readonly BLUE=$COLOR_INFO
+readonly PURPLE=$COLOR_STEP
+readonly CYAN=$COLOR_HIGHLIGHT
+readonly NC=$COLOR_RESET
 
 # Logging functions
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_step() { echo -e "${PURPLE}[STEP]${NC} $1"; }
+log_info() { echo -e "${COLOR_INFO}[INFO]${COLOR_RESET} $1"; }
+log_success() { echo -e "${COLOR_SUCCESS}[SUCCESS]${COLOR_RESET} $1"; }
+log_warning() { echo -e "${COLOR_WARNING}[WARNING]${COLOR_RESET} $1"; }
+log_error() { echo -e "${COLOR_ERROR}[ERROR]${COLOR_RESET} $1"; }
+log_step() { echo -e "${COLOR_STEP}[STEP]${COLOR_RESET} $1"; }
+
+# User input helper - consolidated function for all y/N prompts
+ask_continue() {
+    local prompt="${1:-Continue?}"
+    local default="${2:-n}"  # n=default no, y=default yes
+    
+    if [[ "$default" == "y" ]]; then
+        read -p "$prompt (Y/n): " -n 1 -r
+        echo
+        [[ -z "$REPLY" || "$REPLY" =~ ^[Yy]$ ]]
+    else
+        read -p "$prompt (y/N): " -n 1 -r
+        echo
+        [[ "$REPLY" =~ ^[Yy]$ ]]
+    fi
+}
+
+# Cleanup helper functions
+cleanup_file() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        rm -f "$file"
+        log_info "Cleaned up: $(basename "$file")"
+    fi
+}
+
+cleanup_files() {
+    local files=("$@")
+    for file in "${files[@]}"; do
+        cleanup_file "$file"
+    done
+}
 
 # Welcome message
 show_welcome() {
-    echo -e "${CYAN}================================================${NC}"
-    echo -e "${CYAN}  KuBu VPS Server Initialization${NC}"
-    echo -e "${CYAN}================================================${NC}"
+    echo -e "${COLOR_HIGHLIGHT}================================================${COLOR_RESET}"
+    echo -e "${COLOR_HIGHLIGHT}  KuBu VPS Server Initialization${COLOR_RESET}"
+    echo -e "${COLOR_HIGHLIGHT}================================================${COLOR_RESET}"
     echo ""
     echo "This script will set up your VPS with the KuBu server configuration."
     echo ""
@@ -46,11 +97,10 @@ show_welcome() {
     echo "  • Welcome message and aliases"
     echo "  • Documentation and tools"
     echo ""
-    read -p "Continue with initialization? (y/N): " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    
+    if ! ask_continue "Continue with initialization?"; then
         echo "Initialization cancelled."
-        exit 0
+        exit $EXIT_USER_CANCELLED
     fi
 }
 
@@ -73,30 +123,28 @@ check_prerequisites() {
         echo "Install missing tools:"
         echo "  sudo apt update"
         echo "  sudo apt install -y ${missing_tools[*]}"
-        exit 1
+        exit $EXIT_PREREQUISITES
     fi
     
     # Check sudo access
     if ! sudo -n true 2>/dev/null; then
         log_error "This script requires sudo privileges"
         echo "Please ensure you can run sudo commands"
-        exit 1
+        exit $EXIT_PREREQUISITES
     fi
     
     log_success "Prerequisites check passed"
 }
 
-# Remove the old handle_existing_token function since we replaced it with check_existing_token
-
 # Show token creation guide
 show_token_creation_guide() {
     echo ""
-    echo -e "${YELLOW}=== GitHub Token Creation Guide ===${NC}"
+    echo -e "${COLOR_WARNING}=== GitHub Token Creation Guide ===${COLOR_RESET}"
     echo ""
-    echo -e "${YELLOW}IMPORTANT: Log in to GitHub with the admin account!${NC}"
+    echo -e "${COLOR_WARNING}IMPORTANT: Log in to GitHub with the admin account!${COLOR_RESET}"
     echo ""
     echo "1. Open this URL in your browser:"
-    echo -e "   ${CYAN}https://github.com/settings/tokens${NC}"
+    echo -e "   ${COLOR_HIGHLIGHT}https://github.com/settings/tokens${COLOR_RESET}"
     echo ""
     echo "2. Click 'Generate new token' → 'Generate new token (classic)'"
     echo ""
@@ -112,8 +160,39 @@ show_token_creation_guide() {
     echo ""
 }
 
+# Find existing token - consolidated token search logic
+find_token() {
+    # Priority order for token discovery:
+    # 1. Secure location (/srv/tokens/)
+    # 2. Working directory
+    # 3. Script directory
+    # 4. Temporary directory
+    
+    local token_files=(".${REPO_NAME}_token" ".kubu-token")
+    local search_paths=("$SECURE_TOKEN_DIR" "." "$WORK_DIR")
+    
+    for token_file in "${token_files[@]}"; do
+        for search_path in "${search_paths[@]}"; do
+            local full_path="$search_path/$token_file"
+            if [[ -f "$full_path" ]]; then
+                local token_content=$(cat "$full_path" 2>/dev/null | tr -d '\n\r ')
+                if [[ -n "$token_content" ]]; then
+                    echo "$token_content"
+                    return 0
+                fi
+            fi
+        done
+    done
+    
+    return 1
+}
+
 # Check for existing token first - separate function
 check_existing_token() {
+    # Purpose: Check for existing GitHub token and offer reuse options
+    # Returns: 0 if token found and valid, 1 if new token needed
+    # Side effects: Sets GITHUB_TOKEN environment variable
+    
     log_step "Checking for existing GitHub token..."
     
     # Check for existing token in secure location
@@ -183,9 +262,7 @@ create_github_token() {
             echo "Token cannot be empty. Please try again."
         elif [[ ! "$token" =~ ^ghp_ ]]; then
             log_warning "Token should start with 'ghp_' (classic token)"
-            read -p "Continue anyway? (y/N): " -n 1 -r
-            echo ""
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            if ! ask_continue "Continue anyway?"; then
                 token=""
                 continue
             fi
@@ -263,9 +340,7 @@ test_github_token() {
         echo "  • Missing 'repo' scope"
         echo "  • Not authorized for this repository"
         echo ""
-        read -p "Try with a different token? (y/N): " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if ask_continue "Try with a different token?"; then
             # Remove failed token and try again
             rm -f "$TOKEN_FILE" "$SECURE_TOKEN_FILE" 2>/dev/null
             return 1  # Signal to retry token creation
@@ -290,9 +365,7 @@ run_deployment() {
     echo "  • Set up all aliases and commands"
     echo ""
     
-    read -p "Run deployment now? (Y/n): " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
+    if ! ask_continue "Run deployment now?" "y"; then
         log_info "Deployment skipped"
         echo ""
         echo "To run deployment later:"
@@ -335,19 +408,14 @@ finalize_setup() {
         log_success "Token secured at: $SECURE_TOKEN_FILE"
     fi
     
-    # Clean up temporary files
-    local cleanup_files=(
+    # Clean up temporary files using helper function
+    local cleanup_targets=(
         "$WORK_DIR/initialize-kubu-vps.sh"
         "$MANAGE_SCRIPT"
         "$TOKEN_FILE"  # Remove temporary token file
     )
     
-    for file in "${cleanup_files[@]}"; do
-        if [[ -f "$file" ]]; then
-            rm -f "$file"
-            log_info "Cleaned up: $(basename "$file")"
-        fi
-    done
+    cleanup_files "${cleanup_targets[@]}"
     
     log_success "Setup finalized and temporary files cleaned up"
 }
@@ -355,26 +423,26 @@ finalize_setup() {
 # Show final instructions
 show_final_instructions() {
     echo ""
-    echo -e "${GREEN}================================================${NC}"
-    echo -e "${GREEN}  KuBu VPS Setup Complete!${NC}"
-    echo -e "${GREEN}================================================${NC}"
+    echo -e "${COLOR_SUCCESS}================================================${COLOR_RESET}"
+    echo -e "${COLOR_SUCCESS}  KuBu VPS Setup Complete!${COLOR_RESET}"
+    echo -e "${COLOR_SUCCESS}================================================${COLOR_RESET}"
     echo ""
     echo "Your VPS is now configured with KuBu server management tools."
     echo ""
-    echo -e "${CYAN}Available commands:${NC}"
+    echo -e "${COLOR_HIGHLIGHT}Available commands:${COLOR_RESET}"
     echo "  welcome          - Show server status and information"
     echo "  install-docker   - Install Docker and Docker Compose"
     echo "  setup-groups     - Add current user to sudo and docker groups"
     echo "  manage-kubu-vps  - Main management tool"
     echo "  dockerdir        - Navigate to Docker projects"
     echo ""
-    echo -e "${CYAN}Next recommended steps:${NC}"
+    echo -e "${COLOR_HIGHLIGHT}Next recommended steps:${COLOR_RESET}"
     echo "1. Install Docker: install-docker"
     echo "2. Add user to groups: setup-groups"
     echo "3. Logout and login again to reload environment"
     echo "4. Check status: welcome"
     echo ""
-    echo -e "${CYAN}Files and directories:${NC}"
+    echo -e "${COLOR_HIGHLIGHT}Files and directories:${COLOR_RESET}"
     echo "  /srv/scripts/    - Management scripts"
     echo "  /srv/docker/     - Docker project configurations"
     echo "  /srv/docs/       - Documentation"
@@ -382,13 +450,13 @@ show_final_instructions() {
     echo ""
     echo "For help: manage-kubu-vps --help"
     echo ""
-    echo -e "${YELLOW}Token Management:${NC}"
+    echo -e "${COLOR_WARNING}Token Management:${COLOR_RESET}"
     echo "Your GitHub token is securely stored in $SECURE_TOKEN_DIR"
     echo "Future deployments will automatically use this token."
     echo ""
 }
 
-# Handle errors
+# Handle errors - improved cleanup function
 handle_error() {
     local exit_code=$?
     log_error "Initialization failed with exit code $exit_code"
@@ -396,7 +464,7 @@ handle_error() {
     echo "Cleaning up temporary files..."
     
     # Clean up on error but keep secure token if it was created
-    rm -f "$TOKEN_FILE" "$MANAGE_SCRIPT" "$WORK_DIR/initialize-kubu-vps.sh" 2>/dev/null
+    cleanup_files "$TOKEN_FILE" "$MANAGE_SCRIPT" "$WORK_DIR/initialize-kubu-vps.sh"
     
     echo ""
     echo "To try again:"
@@ -440,18 +508,18 @@ main() {
                 echo ""
             else
                 log_error "Failed to create valid token after $max_attempts attempts"
-                exit 1
+                exit $EXIT_TOKEN_INVALID
             fi
         fi
     done
     
     if [[ "$token_ready" == "false" ]]; then
         log_error "No valid token available"
-        exit 1
+        exit $EXIT_TOKEN_INVALID
     fi
     
     # Download management script
-    download_management_script
+    download_management_script || exit $EXIT_DOWNLOAD_FAILED
     
     # Secure token and cleanup
     finalize_setup
@@ -468,10 +536,8 @@ main() {
 if [[ $EUID -eq 0 ]]; then
     log_warning "Running as root is not recommended"
     echo "Consider running as a regular user with sudo access"
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 0
+    if ! ask_continue "Continue anyway?"; then
+        exit $EXIT_USER_CANCELLED
     fi
 fi
 
