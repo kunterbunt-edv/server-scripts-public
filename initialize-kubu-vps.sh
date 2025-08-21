@@ -1,8 +1,9 @@
 #!/bin/bash
 # initialize-kubu-vps.sh
 # KuBu VPS Initialization Script with improved token management
-# Downloads and deploys KuBu server configuration from private repository
+# Purpose: Downloads and deploys KuBu server configuration from private repository
 # Repository: server-scripts-public/
+# Deployment Path: /tmp/
 # Dependencies: wget, git, curl, sudo access
 
 set -euo pipefail
