@@ -14,7 +14,7 @@ wget https://raw.githubusercontent.com/kunterbunt-edv/server-scripts-public/main
 
 1. **Downloads the initialization script** to `/tmp/`
 2. **Guides you through GitHub token creation** for private repository access
-3. **Downloads the main management script** from the private repository
+3. **Downloads the main management script** from the [private repository](https://github.com/kunterbunt-edv/server-scripts)
 4. **Deploys the complete server configuration** to your VPS
 5. **Shows the welcome message** and available commands
 6. **Cleans up temporary files** after successful deployment
